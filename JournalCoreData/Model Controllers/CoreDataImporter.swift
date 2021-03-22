@@ -10,25 +10,38 @@ import Foundation
 import CoreData
 
 class CoreDataImporter {
-    init(context: NSManagedObjectContext) {
-        self.context = context
-    }
+  
     
-    func sync(entries: [EntryRepresentation], completion: @escaping (Error?) -> Void = { _ in }) {
+    func sync(representations: [EntryRepresentation]) throws {
+        let context = CoreDataStack.shared.container.newBackgroundContext()
+        let identifiersToFetch = representations.compactMap({ $0.identifier })
+        // Make dictionary of key value pairs to check representations against those in CD
+        let representationsById = Dictionary(uniqueKeysWithValues: zip(identifiersToFetch, representations))
+        var entriesToCreate = representationsById
+        let fetchRequest: NSFetchRequest<Entry> = Entry.fetchRequest()
+        fetchRequest.predicate = NSPredicate(format: "identifier IN %@", identifiersToFetch)
         
-        self.context.perform {
-            for entryRep in entries {
-                guard let identifier = entryRep.identifier else { continue }
+        context.performAndWait {
+            do {
+                // Instead of fetching the single entry, let's fetch all of them just once
+                let storeEntries = try context.fetch(fetchRequest)
                 
-                let entry = self.fetchSingleEntryFromPersistentStore(with: identifier, in: self.context)
-                if let entry = entry, entry != entryRep {
-                    self.update(entry: entry, with: entryRep)
-                } else if entry == nil {
-                    _ = Entry(entryRepresentation: entryRep, context: self.context)
+                for entry in storeEntries {
+                    guard let identifier = entry.identifier,
+                          let representation = representationsById[identifier] else { continue }
+                    
+                    self.update(entry: entry, with: representation)
+                    entriesToCreate.removeValue(forKey: identifier)
                 }
+                for representation in entriesToCreate.values {
+                    Entry(entryRepresentation: representation, context: context)
+                }
+                
+            } catch {
+                NSLog("Error fetching entries for IDs, \(error)")
             }
-            completion(nil)
         }
+        try CoreDataStack.shared.save(with: context)
     }
     
     private func update(entry: Entry, with entryRep: EntryRepresentation) {
@@ -39,21 +52,5 @@ class CoreDataImporter {
         entry.identifier = entryRep.identifier
     }
     
-    private func fetchSingleEntryFromPersistentStore(with identifier: String?, in context: NSManagedObjectContext) -> Entry? {
-        
-        guard let identifier = identifier else { return nil }
-        
-        let fetchRequest: NSFetchRequest<Entry> = Entry.fetchRequest()
-        fetchRequest.predicate = NSPredicate(format: "identifier == %@", identifier)
-        
-        var result: Entry? = nil
-        do {
-            result = try context.fetch(fetchRequest).first
-        } catch {
-            NSLog("Error fetching single entry: \(error)")
-        }
-        return result
-    }
-    
-    let context: NSManagedObjectContext
+   
 }

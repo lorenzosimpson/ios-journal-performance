@@ -8,7 +8,7 @@
 
 import Foundation
 
-struct EntryRepresentation: Codable {
+struct EntryRepresentation: Codable, Equatable {
     var title: String?
     var bodyText: String?
     var mood: String?
